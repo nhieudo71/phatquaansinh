@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Quản Lý Quà An Sinh v2.3 (Full List & Sorted)</title>
+    
+    <!-- Tải các thư viện cần thiết từ CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+    
+    <!-- Thư viện icon Lucide -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#2563eb',
+                        secondary: '#475569',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', 'Segoe UI', sans-serif; background-color: #f8fafc; -webkit-tap-highlight-color: transparent; }
+        .animate-fade-in { animation: fadeIn 0.3s ease-in-out; }
+        .animate-slide-in { animation: slideIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideIn { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+        
+        /* Custom Scrollbar for desktop */
+        @media (min-width: 768px) {
+            ::-webkit-scrollbar { width: 6px; height: 6px; }
+            ::-webkit-scrollbar-track { background: transparent; }
+            ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+            ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        }
+        
+        /* Modal Overlay backdrop filter */
+        .modal-overlay { background-color: rgba(15, 23, 42, 0.6); backdrop-filter: blur(2px); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // --- ICON COMPONENT HELPER ---
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const containerRef = useRef(null);
+
+            useEffect(() => {
+                if (containerRef.current && window.lucide) {
+                    containerRef.current.innerHTML = '';
+                    const iconElement = document.createElement('i');
+                    iconElement.setAttribute('data-lucide', name);
+                    iconElement.setAttribute('width', size);
+                    iconElement.setAttribute('height', size);
+                    if (className) iconElement.setAttribute('class', className);
+                    containerRef.current.appendChild(iconElement);
+                    if (window.lucide.createIcons) {
+                        window.lucide.createIcons({
+                            root: containerRef.current
+                        });
+                    }
+                }
+            }, [name, size, className]);
+
+            return <span ref={containerRef} className="inline-flex items-center justify-center shrink-0" style={{ width: size, height: size }}></span>;
+        };
+
+        // --- UTILS ---
+        const generateID = () => {
+            const random9 = Math.floor(Math.random() * 1000000000).toString().padStart(9, '0');
+            return `083${random9}`;
+        };
+
+        const shuffleArray = (array) => {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        };
+
+        const getDuplicateGroups = (peopleList) => {
+            const groups = {};
+            peopleList.forEach(p => {
+                const normalizedName = p.name.trim().toLowerCase();
+                if (!groups[normalizedName]) {
+                    groups[normalizedName] = [];
+                }
+                groups[normalizedName].push(p);
+            });
+            return Object.values(groups).filter(group => group.length > 1);
+        };
+
+        // --- CHART COMPONENTS (SVG SIMPLE - RESPONSIVE) ---
+        const SimplePieChart = ({ data, colors }) => {
+            let cumulativePercent = 0;
+            const total = data.reduce((sum, item) => sum + item.value, 0);
+            
+            if (total === 0) return <div className="text-gray-400 text-xs text-center p-4">Chưa có dữ liệu</div>;
+
+            return (
+                <div className="relative w-32 h-32 md:w-40 md:h-40 mx-auto">
+                    <svg viewBox="-1 -1 2 2" className="transform -rotate-90 w-full h-full">
+                        {data.map((item, index) => {
+                            const startPercent = cumulativePercent;
+                            const slicePercent = item.value / total;
+                            cumulativePercent += slicePercent;
+                            
+                            const startX = Math.cos(2 * Math.PI * startPercent);
+                            const startY = Math.sin(2 * Math.PI * startPercent);
+                            const endX = Math.cos(2 * Math.PI * cumulativePercent);
+                            const endY = Math.sin(2 * Math.PI * cumulativePercent);
+                            
+                            const largeArcFlag = slicePercent > 0.5 ? 1 : 0;
+                            const pathData = slicePercent === 1 
+                                ? `M 0 0 L 1 0 A 1 1 0 1 1 1 -0.0001 L 0 0`
+                                : `M 0 0 L ${startX} ${startY} A 1 1 0 ${largeArcFlag} 1 ${endX} ${endY} L 0 0`;
+                            
+                            return <path key={index} d={pathData} fill={colors[index]} stroke="white" strokeWidth="0.02" />;
+                        })}
+                    </svg>
+                </div>
+            );
+        };
+
+        const SimpleBarChart = ({ data }) => {
+            if (data.length === 0) return <div className="text-gray-400 text-xs text-center p-4">Chưa có dữ liệu</div>;
+            const maxVal = Math.max(...data.map(d => d.value));
+            
+            return (
+                <div className="flex items-end gap-2 h-40 pt-6 pb-2 px-2 border-b border-l border-gray-200 w-full overflow-x-auto">
+                    {data.map((item, index) => (
+                        <div key={index} className="flex-1 flex flex-col items-center group relative min-w-[40px]">
+                            <div 
+                                className="w-full bg-blue-500 rounded-t-sm hover:bg-blue-600 transition-all relative"
+                                style={{ height: `${(item.value / maxVal) * 100}%` }}
+                            >
+                                <span className="absolute -top-5 left-1/2 transform -translate-x-1/2 text-[10px] font-bold text-gray-600 opacity-100">
+                                    {item.value}
+                                </span>
+                            </div>
+                            <span className="text-[10px] text-gray-500 mt-1 w-full text-center truncate px-1" title={item.label}>{item.label}</span>
+                        </div>
+                    ))}
+                </div>
+            );
+        };
+
+        // --- MAIN APP COMPONENT ---
+        const App = () => {
+            // --- STATE ---
+            const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [people, setPeople] = useState([]);
+            const [waves, setWaves] = useState([]);
+            const [loading, setLoading] = useState(true);
+            
+            // Modal States
+            const [viewingWave, setViewingWave] = useState(null);
+            const [showDupModal, setShowDupModal] = useState(false);
+            const [duplicateGroups, setDuplicateGroups] = useState([]);
+            const [editingPerson, setEditingPerson] = useState(null);
+            const [editForm, setEditForm] = useState({});
+            
+            // New Modal State for Manual Add
+            const [showAddModal, setShowAddModal] = useState(false);
+            const [addForm, setAddForm] = useState({ name: '', personalId: '', address: '', category: 'Hộ Thường' });
+
+            // Form Create Wave
+            const [distForm, setDistForm] = useState({
+                name: '',
+                date: new Date().toISOString().split('T')[0],
+                quantity: 10,
+                filterAddress: 'all',
+                filterCategory: 'all'
+            });
+
+            const fileInputRef = useRef(null);
+
+            // --- INIT DATA ---
+            useEffect(() => {
+                const loadData = () => {
+                    const savedPeople = localStorage.getItem('charity_people');
+                    const savedWaves = localStorage.getItem('charity_waves');
+
+                    if (savedPeople) setPeople(JSON.parse(savedPeople));
+                    if (savedWaves) setWaves(JSON.parse(savedWaves));
+                    
+                    setLoading(false);
+                };
+                loadData();
+            }, []);
+
+            useEffect(() => {
+                if (!loading) {
+                    localStorage.setItem('charity_people', JSON.stringify(people));
+                    localStorage.setItem('charity_waves', JSON.stringify(waves));
+                }
+            }, [people, waves, loading]);
+
+            useEffect(() => {
+                setIsSidebarOpen(false);
+            }, [activeTab]);
+
+            // --- STATS & DATA PROCESSING ---
+            const stats = useMemo(() => {
+                return {
+                    total: people.length,
+                    waiting: people.filter(p => p.status === 'waiting').length,
+                    received: people.filter(p => p.status === 'received').length,
+                    waves: waves.length
+                };
+            }, [people, waves]);
+
+            // SORT PEOPLE: Newest createdAt first
+            const sortedPeople = useMemo(() => {
+                return [...people].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            }, [people]);
+
+            const addressStats = useMemo(() => {
+                const counts = {};
+                people.forEach(p => { counts[p.address] = (counts[p.address] || 0) + 1; });
+                return Object.entries(counts)
+                    .map(([label, value]) => ({ label, value }))
+                    .sort((a, b) => b.value - a.value)
+                    .slice(0, 10);
+            }, [people]);
+
+            const uniqueAddresses = useMemo(() => [...new Set(people.map(p => p.address))], [people]);
+            const uniqueCategories = useMemo(() => [...new Set(people.map(p => p.category))], [people]);
+
+            // --- HANDLERS ---
+
+            const handleBackup = () => {
+                const data = { version: "2.3", exportDate: new Date().toISOString(), people, waves };
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `SaoLuu_QuaAnSinh_${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            };
+
+            const handleRestore = (e) => {
+                const file = e.target.files[0];
+                if(!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    try {
+                        const data = JSON.parse(evt.target.result);
+                        if(data.people && Array.isArray(data.people)) {
+                            if(confirm(`Phục hồi ${data.people.length} người? Dữ liệu cũ sẽ mất.`)) {
+                                setPeople(data.people);
+                                setWaves(data.waves || []);
+                                alert("Thành công!");
+                                setActiveTab('dashboard');
+                            }
+                        } else alert("File lỗi!");
+                    } catch(err) { alert("Lỗi đọc file!"); }
+                    finally { e.target.value = null; }
+                };
+                reader.readAsText(file);
+            };
+
+            const handleExportExcel = () => {
+                if (people.length === 0) return alert("Chưa có dữ liệu để xuất!");
+                
+                // Export sorted list to match view
+                const data = sortedPeople.map((p, i) => ({
+                    STT: i + 1,
+                    'Họ Tên': p.name,
+                    'CCCD/ID': p.personalId,
+                    'Địa Chỉ': p.address,
+                    'Đối Tượng': p.category,
+                    'Trạng Thái': p.status === 'received' ? 'Đã nhận' : 'Chưa nhận',
+                    'Đợt Gần Nhất': p.waveId ? (waves.find(w => w.id === p.waveId)?.name || '') : ''
+                }));
+                
+                const ws = XLSX.utils.json_to_sheet(data);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "DanhSach");
+                XLSX.writeFile(wb, `DanhSach_AnSinh_${new Date().toISOString().slice(0,10)}.xlsx`);
+            };
+
+            const handleExportWaveExcel = (wave) => {
+                const data = wave.recipients.map((p, i) => ({
+                    STT: i + 1,
+                    'Họ Tên': p.name,
+                    'CCCD/ID': p.personalId,
+                    'Địa Chỉ': p.address,
+                    'Đối Tượng': p.category,
+                    'Ngày Nhận': wave.date
+                }));
+
+                const ws = XLSX.utils.json_to_sheet(data);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "DanhSach");
+                XLSX.writeFile(wb, `DS_Dot_${wave.name}.xlsx`);
+            };
+
+            const handleAddPerson = () => {
+                if (!addForm.name) return alert("Vui lòng nhập họ tên!");
+                
+                const pid = addForm.personalId || generateID();
+                const newPerson = {
+                    id: pid,
+                    personalId: pid,
+                    name: addForm.name,
+                    address: addForm.address || 'Chưa rõ',
+                    category: addForm.category || 'Hộ Thường',
+                    status: 'waiting',
+                    waveId: null,
+                    createdAt: Date.now()
+                };
+
+                if (people.some(p => p.personalId === pid)) {
+                    if (!confirm("Mã ID này đã tồn tại. Bạn có chắc chắn muốn thêm (có thể gây trùng lặp)?")) return;
+                }
+
+                setPeople(prev => [newPerson, ...prev]);
+                setAddForm({ name: '', personalId: '', address: '', category: 'Hộ Thường' });
+                setShowAddModal(false);
+                alert("Đã thêm thành công!");
+            };
+
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    try {
+                        const bstr = evt.target.result;
+                        const wb = XLSX.read(bstr, { type: 'binary' });
+                        const ws = wb.Sheets[wb.SheetNames[0]];
+                        const data = XLSX.utils.sheet_to_json(ws);
+                        const newPeopleMap = new Map(people.map(p => [String(p.personalId), p]));
+                        
+                        let countNew = 0;
+                        data.forEach((item, index) => {
+                            const pid = String(item['CCCD'] || item['CMND'] || item['ID'] || item['MaSo'] || generateID());
+                            const name = item['HoTen'] || item['Họ Tên'] || item['Name'] || `Người ${index}`;
+                            const newPerson = {
+                                id: pid, personalId: pid, name: name,
+                                address: item['DiaChi'] || item['Địa Chỉ'] || item['Address'] || 'Chưa rõ',
+                                category: item['DoiTuong'] || item['Đối Tượng'] || item['Category'] || 'Hộ Thường',
+                                status: 'waiting', waveId: null, createdAt: Date.now()
+                            };
+                            if (newPeopleMap.has(pid)) {
+                                const oldData = newPeopleMap.get(pid);
+                                // Preserve original createdAt for existing people
+                                newPeopleMap.set(pid, { 
+                                    ...newPerson, 
+                                    status: oldData.status, 
+                                    waveId: oldData.waveId,
+                                    createdAt: oldData.createdAt || Date.now() 
+                                });
+                            } else {
+                                newPeopleMap.set(pid, newPerson);
+                                countNew++;
+                            }
+                        });
+                        const updatedList = Array.from(newPeopleMap.values());
+                        setPeople(updatedList);
+                        const dups = getDuplicateGroups(updatedList);
+                        if (dups.length > 0) {
+                            setDuplicateGroups(dups); setShowDupModal(true);
+                        } else alert(`Đã nhập ${updatedList.length} người!`);
+                    } catch (err) { alert("Lỗi file: " + err.message); }
+                };
+                reader.readAsBinaryString(file);
+            };
+
+            const handleScanDuplicates = () => {
+                const dups = getDuplicateGroups(people);
+                if (dups.length === 0) alert("Không có trùng tên.");
+                else { setDuplicateGroups(dups); setShowDupModal(true); }
+            };
+
+            const handleDeletePerson = (id) => {
+                if(window.confirm("Xóa người này?")) {
+                    setPeople(prev => prev.filter(p => p.id !== id));
+                    setDuplicateGroups(prev => prev.map(group => group.filter(p => p.id !== id)).filter(group => group.length > 1));
+                }
+            };
+
+            const openEditModal = (person) => { setEditingPerson(person); setEditForm({ ...person }); };
+            const handleSaveEdit = () => {
+                if (!editForm.name) return alert("Thiếu tên!");
+                setPeople(prev => prev.map(p => p.id === editingPerson.id ? { ...p, ...editForm } : p));
+                setEditingPerson(null);
+            };
+
+            const loadMockData = () => {
+                const mockData = Array.from({ length: 50 }, (_, i) => ({
+                    id: generateID(), personalId: generateID(),
+                    name: `Người Mẫu ${i+1}`, address: `Thôn ${i%5 + 1}`,
+                    category: ['Nghèo', 'Cận Nghèo'][i%2], status: 'waiting', waveId: null, createdAt: Date.now()
+                }));
+                setPeople(prev => [...prev, ...mockData]);
+                alert("Đã thêm 50 người mẫu!");
+            };
+
+            const handleCreateWave = () => {
+                if (!distForm.name) return alert("Nhập tên đợt!");
+                let candidates = people.filter(p => p.status === 'waiting');
+                if (distForm.filterAddress !== 'all') candidates = candidates.filter(p => p.address === distForm.filterAddress);
+                if (distForm.filterCategory !== 'all') candidates = candidates.filter(p => p.category === distForm.filterCategory);
+                
+                if (candidates.length === 0) return alert("Không còn ai thỏa điều kiện!");
+                if (distForm.filterAddress === 'all' && distForm.filterCategory === 'all') candidates = shuffleArray([...candidates]);
+
+                const qty = Math.min(parseInt(distForm.quantity), candidates.length);
+                const selected = candidates.slice(0, qty);
+                const selectedIds = new Set(selected.map(p => p.id));
+
+                const newWave = {
+                    id: `W${Date.now()}`, name: distForm.name, date: distForm.date,
+                    count: selected.length, criteria: `${distForm.filterAddress}/${distForm.filterCategory}`,
+                    recipients: selected, createdAt: Date.now()
+                };
+
+                setWaves(prev => [newWave, ...prev]);
+                setPeople(prev => prev.map(p => selectedIds.has(p.id) ? { ...p, status: 'received', waveId: newWave.id } : p));
+                alert(`Đã tạo đợt ${qty} suất!`);
+                setActiveTab('history');
+                setViewingWave(newWave);
+            };
+
+            const handleResetCampaign = () => {
+                if (confirm("Reset trạng thái 'Chưa nhận' cho tất cả?")) {
+                    setPeople(prev => prev.map(p => ({ ...p, status: 'waiting', waveId: null })));
+                    setWaves([]);
+                }
+            };
+
+            const handleHardReset = () => {
+                if (confirm("XÓA SẠCH DỮ LIỆU?")) {
+                    setPeople([]); setWaves([]);
+                    localStorage.clear();
+                }
+            };
+
+            // --- UI COMPONENTS ---
+            const SidebarItem = ({ id, iconName, label }) => (
+                <button onClick={() => setActiveTab(id)} className={`w-full flex items-center gap-3 px-4 py-3.5 text-sm font-medium transition-all rounded-xl mb-2 ${activeTab === id ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-100'}`}>
+                    <Icon name={iconName} size={20} />{label}
+                </button>
+            );
+
+            if (loading) return <div className="flex h-screen items-center justify-center text-blue-600 font-bold"><Icon name="loader-2" className="animate-spin mr-2"/> Đang tải...</div>;
+
+            return (
+                <div className="flex h-screen bg-slate-50 font-sans text-slate-800 overflow-hidden">
+                    <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={handleRestore} />
+
+                    {/* MOBILE OVERLAY */}
+                    {isSidebarOpen && (
+                        <div className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden" onClick={() => setIsSidebarOpen(false)}></div>
+                    )}
+
+                    {/* SIDEBAR (Responsive) */}
+                    <div className={`fixed inset-y-0 left-0 z-50 w-72 bg-white border-r border-slate-200 flex flex-col p-4 shadow-xl transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+                        <div className="flex items-center justify-between mb-8 px-2 mt-2">
+                            <div className="flex items-center gap-3">
+                                <div className="bg-blue-600 text-white p-2 rounded-lg"><Icon name="gift" size={24} /></div>
+                                <div><h1 className="text-xl font-bold text-slate-900 leading-none">Quà An Sinh</h1><span className="text-xs text-orange-500 font-bold">V2.3</span></div>
+                            </div>
+                            <button onClick={() => setIsSidebarOpen(false)} className="md:hidden text-slate-400"><Icon name="x" size={24}/></button>
+                        </div>
+                        
+                        <nav className="flex-1 overflow-y-auto">
+                            <SidebarItem id="dashboard" iconName="layout-grid" label="Tổng quan" />
+                            <SidebarItem id="import" iconName="file-input" label="Nhập dữ liệu" />
+                            <SidebarItem id="create-wave" iconName="wand-2" label="Tạo đợt phát" />
+                            <SidebarItem id="history" iconName="history" label="Lịch sử" />
+                            
+                            <div className="my-4 border-t border-slate-100"></div>
+                            
+                            <div className="space-y-1">
+                                <button onClick={handleScanDuplicates} className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-600 hover:bg-orange-50 hover:text-orange-600 rounded-xl transition-colors">
+                                    <Icon name="search" size={18} /> Kiểm tra trùng
+                                </button>
+                                <button onClick={handleBackup} className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors">
+                                    <Icon name="download-cloud" size={18} /> Sao lưu
+                                </button>
+                                <button onClick={() => fileInputRef.current.click()} className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-600 hover:bg-green-50 hover:text-green-600 rounded-xl transition-colors">
+                                    <Icon name="upload-cloud" size={18} /> Phục hồi
+                                </button>
+                            </div>
+                        </nav>
+                        
+                        <div className="mt-4 pt-4 border-t border-slate-100 flex gap-2">
+                             <button onClick={handleResetCampaign} className="flex-1 bg-purple-50 text-purple-700 hover:bg-purple-100 py-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1">
+                                 <Icon name="refresh-cw" size={16}/> Mùa Vụ Mới
+                             </button>
+                             <button onClick={handleHardReset} className="flex-1 bg-red-50 text-red-600 hover:bg-red-100 py-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1">
+                                 <Icon name="trash-2" size={16}/> Xóa Hết
+                             </button>
+                        </div>
+                    </div>
+
+                    {/* MAIN CONTENT */}
+                    <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-50 relative w-full">
+                        {/* MOBILE HEADER */}
+                        <div className="md:hidden bg-white px-4 py-3 border-b flex justify-between items-center shadow-sm z-30 sticky top-0">
+                            <div className="flex items-center gap-2">
+                                <button onClick={() => setIsSidebarOpen(true)} className="p-2 -ml-2 text-slate-600"><Icon name="menu" size={24}/></button>
+                                <span className="font-bold text-lg text-slate-800">
+                                    {activeTab === 'dashboard' ? 'Tổng Quan' : 
+                                     activeTab === 'import' ? 'Nhập Dữ Liệu' : 
+                                     activeTab === 'create-wave' ? 'Phát Quà' : 'Lịch Sử'}
+                                </span>
+                            </div>
+                            <div className="bg-blue-100 text-blue-700 px-2 py-1 rounded-md text-xs font-bold">{people.length} Dân</div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-4 md:p-8 pb-24 md:pb-8">
+                            {/* DASHBOARD */}
+                            {activeTab === 'dashboard' && (
+                                <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
+                                    {/* Stats Grid: 1 col mobile, 2 tablet, 4 desktop */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                        {[
+                                            { label: 'Tổng số dân', val: stats.total, color: 'text-slate-800', bg: 'bg-white', icon: 'users', iconColor: 'bg-blue-100 text-blue-600' },
+                                            { label: 'Chưa nhận', val: stats.waiting, color: 'text-orange-600', bg: 'bg-white', icon: 'clock', iconColor: 'bg-orange-100 text-orange-600' },
+                                            { label: 'Đã nhận', val: stats.received, color: 'text-green-600', bg: 'bg-white', icon: 'check-circle-2', iconColor: 'bg-green-100 text-green-600' },
+                                            { label: 'Số đợt phát', val: stats.waves, color: 'text-purple-600', bg: 'bg-white', icon: 'layers', iconColor: 'bg-purple-100 text-purple-600' }
+                                        ].map((item, idx) => (
+                                            <div key={idx} className={`${item.bg} p-5 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between`}>
+                                                <div><p className="text-slate-500 text-xs font-bold uppercase tracking-wide">{item.label}</p><p className={`text-2xl font-black mt-1 ${item.color}`}>{item.val}</p></div>
+                                                <div className={`${item.iconColor} p-3 rounded-xl`}><Icon name={item.icon} size={24}/></div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {/* Charts Responsive */}
+                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center">
+                                            <h3 className="text-sm font-bold text-slate-700 mb-6 w-full flex items-center gap-2"><Icon name="pie-chart" size={16}/> Tỉ lệ hoàn thành</h3>
+                                            <SimplePieChart data={[{ value: stats.received }, { value: stats.waiting }]} colors={["#22c55e", "#f97316"]} />
+                                            <div className="flex justify-center gap-6 mt-6 w-full text-sm font-medium">
+                                                <div className="flex items-center gap-2"><span className="w-3 h-3 bg-green-500 rounded-full"></span> {Math.round(stats.received/stats.total*100 || 0)}% Xong</div>
+                                                <div className="flex items-center gap-2"><span className="w-3 h-3 bg-orange-500 rounded-full"></span> Còn lại</div>
+                                            </div>
+                                        </div>
+                                        <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                                            <h3 className="text-sm font-bold text-slate-700 mb-6 flex items-center gap-2"><Icon name="bar-chart-3" size={16}/> Top khu vực đông dân</h3>
+                                            <SimpleBarChart data={addressStats} />
+                                        </div>
+                                    </div>
+
+                                    {/* Data Table Responsive */}
+                                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                                            <div className="flex items-center gap-2">
+                                                <h2 className="font-bold text-slate-700 flex items-center gap-2"><Icon name="list" size={18}/> Danh sách dân</h2>
+                                                <span className="text-xs bg-slate-200 px-2 py-1 rounded text-slate-600 font-mono">{people.length} records</span>
+                                            </div>
+                                            <button onClick={handleExportExcel} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2 shadow-sm transition-all">
+                                                <Icon name="file-down" size={16} /> <span className="hidden sm:inline">Xuất Excel</span>
+                                            </button>
+                                        </div>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-left border-collapse min-w-[600px]">
+                                                <thead className="bg-slate-50 text-xs uppercase text-slate-500 font-semibold sticky top-0 z-10">
+                                                    <tr>
+                                                        <th className="px-6 py-3">ID / Tên</th>
+                                                        <th className="px-6 py-3">Địa Chỉ / Nhóm</th>
+                                                        <th className="px-6 py-3">Trạng Thái</th>
+                                                        <th className="px-6 py-3 text-right">Sửa</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100 text-sm">
+                                                    {sortedPeople.map(p => (
+                                                        <tr key={p.id} className="hover:bg-blue-50/50 transition-colors">
+                                                            <td className="px-6 py-3">
+                                                                <div className="font-bold text-slate-800">{p.name}</div>
+                                                                <div className="text-xs font-mono text-blue-500 mt-0.5">{p.personalId}</div>
+                                                            </td>
+                                                            <td className="px-6 py-3">
+                                                                <div className="text-slate-600">{p.address}</div>
+                                                                <div className="text-xs text-slate-400 bg-slate-100 inline-block px-1 rounded mt-1">{p.category}</div>
+                                                            </td>
+                                                            <td className="px-6 py-3">
+                                                                {p.status === 'received' ? 
+                                                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700"><Icon name="check" size={12}/> Đã nhận</span> : 
+                                                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-orange-100 text-orange-700"><Icon name="clock" size={12}/> Chờ nhận</span>
+                                                                }
+                                                            </td>
+                                                            <td className="px-6 py-3 text-right">
+                                                                <button onClick={() => openEditModal(p)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Icon name="edit-2" size={16}/></button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                    {people.length === 0 && <tr><td colSpan="4" className="text-center py-12 text-slate-400">Chưa có dữ liệu</td></tr>}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* IMPORT */}
+                            {activeTab === 'import' && (
+                                <div className="flex flex-col items-center justify-center min-h-[50vh] animate-slide-in p-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-4xl">
+                                        {/* Card 1: Import Excel */}
+                                        <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 text-center flex flex-col items-center">
+                                            <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mb-6"><Icon name="file-spreadsheet" size={32} /></div>
+                                            <h3 className="text-xl font-bold text-slate-800 mb-2">Nhập từ Excel</h3>
+                                            <p className="text-slate-500 mb-6 text-sm flex-1">Nhập danh sách hàng loạt từ file Excel. <br/>Yêu cầu cột: <strong>HoTen, DiaChi</strong>.</p>
+                                            <label className="w-full bg-white border-2 border-blue-600 hover:bg-blue-50 text-blue-600 font-bold py-3 px-6 rounded-xl cursor-pointer transition-all active:scale-95 flex items-center justify-center gap-2">
+                                                <Icon name="upload" size={20}/> Chọn file Excel
+                                                <input type="file" className="hidden" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} />
+                                            </label>
+                                        </div>
+
+                                        {/* Card 2: Manual Input */}
+                                        <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 text-center flex flex-col items-center">
+                                            <div className="w-16 h-16 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center mb-6"><Icon name="user-plus" size={32} /></div>
+                                            <h3 className="text-xl font-bold text-slate-800 mb-2">Nhập thủ công</h3>
+                                            <p className="text-slate-500 mb-6 text-sm flex-1">Thêm từng người dân trực tiếp vào hệ thống.<br/>Dành cho việc bổ sung số lượng ít.</p>
+                                            <button onClick={() => setShowAddModal(true)} className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3.5 px-6 rounded-xl transition-all shadow-lg shadow-purple-200 active:scale-95 flex items-center justify-center gap-2">
+                                                <Icon name="plus" size={20}/> Thêm người mới
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="mt-8">
+                                        <button onClick={loadMockData} className="text-xs font-medium text-slate-400 hover:text-blue-600 border-b border-dashed border-slate-300 pb-0.5">Dùng dữ liệu mẫu (Demo)</button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* CREATE WAVE */}
+                            {activeTab === 'create-wave' && (
+                                <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6 animate-slide-in">
+                                    <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200">
+                                        <h2 className="text-lg font-bold mb-6 flex items-center gap-2 text-slate-800 border-b pb-4"><Icon name="settings-2" size={20}/> Cấu hình đợt phát</h2>
+                                        <div className="space-y-5">
+                                            <div><label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Tên đợt quà</label><input className="w-full border border-slate-300 p-3 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none transition-shadow" value={distForm.name} onChange={e=>setDistForm({...distForm, name:e.target.value})} placeholder="VD: Quà Tết 2025"/></div>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Ngày phát</label><input type="date" className="w-full border border-slate-300 p-3 rounded-xl" value={distForm.date} onChange={e=>setDistForm({...distForm, date:e.target.value})}/></div>
+                                                <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Số lượng</label><input type="number" className="w-full border border-slate-300 p-3 rounded-xl font-bold text-blue-600" value={distForm.quantity} onChange={e=>setDistForm({...distForm, quantity:e.target.value})}/></div>
+                                            </div>
+                                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                                                <div className="text-xs font-bold text-slate-400 uppercase mb-3 flex items-center gap-1"><Icon name="filter" size={12}/> Lọc đối tượng</div>
+                                                <div className="space-y-3">
+                                                    <select className="w-full border border-slate-200 p-2.5 rounded-lg bg-white text-sm" value={distForm.filterAddress} onChange={e=>setDistForm({...distForm, filterAddress:e.target.value})}><option value="all">Tất cả khu vực</option>{uniqueAddresses.map(a=><option key={a} value={a}>{a}</option>)}</select>
+                                                    <select className="w-full border border-slate-200 p-2.5 rounded-lg bg-white text-sm" value={distForm.filterCategory} onChange={e=>setDistForm({...distForm, filterCategory:e.target.value})}><option value="all">Tất cả đối tượng</option>{uniqueCategories.map(c=><option key={c} value={c}>{c}</option>)}</select>
+                                                </div>
+                                            </div>
+                                            <button onClick={handleCreateWave} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-200 hover:shadow-blue-300 active:scale-95 transition-all flex justify-center items-center gap-2">
+                                                <Icon name="wand-2" size={20}/> Bắt đầu quay số
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex flex-col justify-center items-center text-center p-8 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-100 relative overflow-hidden">
+                                        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-400 to-indigo-400"></div>
+                                        <div className="bg-white p-5 rounded-full shadow-md mb-6 relative z-10"><Icon name="gift" size={40} className="text-blue-500"/></div>
+                                        <h3 className="text-2xl font-black text-slate-800 mb-2 relative z-10">Dự kiến phát</h3>
+                                        <p className="text-5xl font-black text-blue-600 mb-4 relative z-10">{distForm.quantity}</p>
+                                        <p className="text-sm text-slate-600 max-w-xs leading-relaxed relative z-10">Hệ thống sẽ chọn ngẫu nhiên danh sách người nhận từ những người chưa nhận quà (trạng thái 'waiting').</p>
+                                        {/* Decorative circles */}
+                                        <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-blue-200 rounded-full opacity-20 blur-3xl"></div>
+                                        <div className="absolute top-10 left-10 w-20 h-20 bg-indigo-200 rounded-full opacity-20 blur-xl"></div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* HISTORY */}
+                            {activeTab === 'history' && (
+                                <div className="max-w-4xl mx-auto space-y-4 animate-slide-in">
+                                    {waves.length === 0 ? (
+                                        <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-slate-300">
+                                            <div className="text-slate-300 mb-4"><Icon name="history" size={48} className="mx-auto"/></div>
+                                            <p className="text-slate-500">Chưa có lịch sử phát quà nào.</p>
+                                        </div>
+                                    ) : waves.map(w => (
+                                        <div key={w.id} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-blue-300 transition-colors cursor-pointer" onClick={() => setViewingWave(w)}>
+                                            <div className="flex items-start gap-4">
+                                                <div className="bg-blue-50 text-blue-600 p-3 rounded-xl min-w-[50px] text-center">
+                                                    <span className="block text-xs font-bold uppercase">Tháng</span>
+                                                    <span className="block text-lg font-bold">{w.date.split('-')[1]}</span>
+                                                </div>
+                                                <div>
+                                                    <h3 className="font-bold text-lg text-slate-800">{w.name}</h3>
+                                                    <div className="flex flex-wrap gap-3 text-sm text-slate-500 mt-1">
+                                                        <span className="flex items-center gap-1"><Icon name="calendar" size={14}/> {w.date}</span>
+                                                        <span className="flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded text-xs font-medium"><Icon name="users" size={12}/> {w.count} suất</span>
+                                                        <span className="flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded text-xs font-medium text-slate-400">{w.criteria}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <button className="bg-white border border-slate-200 text-slate-600 hover:bg-blue-600 hover:text-white hover:border-blue-600 px-5 py-2.5 rounded-xl font-medium transition-all text-sm w-full sm:w-auto shadow-sm">
+                                                Xem chi tiết
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* MODAL VIEW WAVE (Full Screen Mobile) */}
+                    {viewingWave && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay p-0 md:p-4 animate-fade-in">
+                            <div className="bg-white w-full h-full md:h-auto md:max-h-[90vh] md:max-w-4xl md:rounded-2xl shadow-2xl flex flex-col">
+                                <div className="p-4 md:p-6 border-b flex justify-between items-center bg-slate-50 md:rounded-t-2xl">
+                                    <div><h3 className="text-lg font-bold text-slate-900">{viewingWave.name}</h3><p className="text-xs text-slate-500">{viewingWave.date} • {viewingWave.count} người</p></div>
+                                    <button onClick={() => setViewingWave(null)} className="bg-slate-200 p-2 rounded-full hover:bg-slate-300 transition-colors"><Icon name="x" size={20} /></button>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-0">
+                                    <table className="w-full text-left border-collapse">
+                                        <thead className="bg-white sticky top-0 shadow-sm z-10">
+                                            <tr><th className="px-4 py-3 text-xs text-slate-500 uppercase bg-slate-50">STT</th><th className="px-4 py-3 text-xs text-slate-500 uppercase bg-slate-50">Họ Tên</th><th className="px-4 py-3 text-xs text-slate-500 uppercase bg-slate-50">Chi tiết</th></tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {viewingWave.recipients.map((p, i) => (
+                                                <tr key={p.id} className="text-sm">
+                                                    <td className="px-4 py-3 text-slate-400 font-mono">{i+1}</td>
+                                                    <td className="px-4 py-3 font-medium text-slate-800">{p.name} <br/><span className="text-xs font-normal text-slate-400 font-mono">{p.personalId}</span></td>
+                                                    <td className="px-4 py-3 text-slate-500 text-xs">{p.address} • {p.category}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div className="p-4 border-t bg-white md:rounded-b-2xl safe-area-pb">
+                                    <button onClick={() => handleExportWaveExcel(viewingWave)} className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-green-200 flex justify-center items-center gap-2">
+                                        <Icon name="file-down" size={20} /> Xuất Excel Đợt Này
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* EDIT MODAL */}
+                    {editingPerson && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay p-4 animate-fade-in">
+                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 transform transition-all scale-100">
+                                <h3 className="font-bold text-lg mb-6 flex gap-2 items-center text-slate-800 border-b pb-2"><Icon name="user-cog" size={24} className="text-blue-600"/> Sửa thông tin</h3>
+                                <div className="space-y-4">
+                                    <input className="w-full border p-3 rounded-xl bg-slate-50 focus:bg-white transition-colors outline-none focus:ring-2 focus:ring-blue-500" value={editForm.name} onChange={e=>setEditForm({...editForm, name: e.target.value})} placeholder="Họ tên"/>
+                                    <input className="w-full border p-3 rounded-xl bg-slate-50 focus:bg-white transition-colors outline-none focus:ring-2 focus:ring-blue-500" value={editForm.personalId} onChange={e=>setEditForm({...editForm, personalId: e.target.value})} placeholder="CCCD/ID"/>
+                                    <input className="w-full border p-3 rounded-xl bg-slate-50 focus:bg-white transition-colors outline-none focus:ring-2 focus:ring-blue-500" value={editForm.address} onChange={e=>setEditForm({...editForm, address: e.target.value})} placeholder="Địa chỉ"/>
+                                    <div className="flex gap-2 justify-end pt-4">
+                                        <button onClick={()=>setEditingPerson(null)} className="px-5 py-2 text-slate-500 hover:bg-slate-100 rounded-lg font-medium">Hủy</button>
+                                        <button onClick={handleSaveEdit} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold shadow-md hover:bg-blue-700">Lưu</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ADD PERSON MODAL (New) */}
+                    {showAddModal && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay p-4 animate-fade-in">
+                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 transform transition-all scale-100">
+                                <h3 className="font-bold text-lg mb-6 flex gap-2 items-center text-slate-800 border-b pb-2"><Icon name="user-plus" size={24} className="text-purple-600"/> Thêm người mới</h3>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Họ và tên <span className="text-red-500">*</span></label>
+                                        <input className="w-full border p-3 rounded-xl bg-slate-50 focus:bg-white transition-colors outline-none focus:ring-2 focus:ring-purple-500" value={addForm.name} onChange={e=>setAddForm({...addForm, name: e.target.value})} placeholder="Nhập họ tên..."/>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">CCCD / Mã định danh</label>
+                                        <input className="w-full border p-3 rounded-xl bg-slate-50 focus:bg-white transition-colors outline-none focus:ring-2 focus:ring-purple-500" value={addForm.personalId} onChange={e=>setAddForm({...addForm, personalId: e.target.value})} placeholder="Nhập số CCCD..."/>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Địa chỉ</label>
+                                        <input className="w-full border p-3 rounded-xl bg-slate-50 focus:bg-white transition-colors outline-none focus:ring-2 focus:ring-purple-500" value={addForm.address} onChange={e=>setAddForm({...addForm, address: e.target.value})} placeholder="Nhập thôn/xóm..."/>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Đối tượng</label>
+                                        <input className="w-full border p-3 rounded-xl bg-slate-50 focus:bg-white transition-colors outline-none focus:ring-2 focus:ring-purple-500" value={addForm.category} onChange={e=>setAddForm({...addForm, category: e.target.value})} placeholder="VD: Hộ Nghèo, Khuyết Tật..."/>
+                                    </div>
+                                    <div className="flex gap-2 justify-end pt-4">
+                                        <button onClick={()=>setShowAddModal(false)} className="px-5 py-2 text-slate-500 hover:bg-slate-100 rounded-lg font-medium">Hủy</button>
+                                        <button onClick={handleAddPerson} className="bg-purple-600 text-white px-6 py-2 rounded-lg font-bold shadow-md hover:bg-purple-700">Thêm ngay</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* DUPLICATE MODAL */}
+                    {showDupModal && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay p-4">
+                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+                                <div className="p-4 bg-orange-50 border-b border-orange-100 rounded-t-2xl flex justify-between items-center">
+                                    <span className="font-bold text-orange-700 flex items-center gap-2"><Icon name="alert-triangle" size={20}/> Phát hiện {duplicateGroups.length} nhóm trùng</span>
+                                    <button onClick={()=>setShowDupModal(false)} className="p-1 rounded hover:bg-orange-100 text-orange-600"><Icon name="x" size={20}/></button>
+                                </div>
+                                <div className="overflow-y-auto p-4 flex-1 space-y-4 bg-slate-50">
+                                    {duplicateGroups.map((g, i) => (
+                                        <div key={i} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+                                            <div className="font-bold text-sm mb-3 text-slate-800 border-b pb-2">Nhóm tên: "{g[0].name}"</div>
+                                            <div className="space-y-2">
+                                                {g.map(p => (
+                                                    <div key={p.id} className="flex justify-between items-center text-sm bg-slate-50 p-2 rounded-lg">
+                                                        <div className="flex flex-col">
+                                                            <span className="font-mono text-xs text-blue-600 font-bold">{p.personalId}</span>
+                                                            <span className="text-slate-600 text-xs">{p.address}</span>
+                                                        </div>
+                                                        <div className="flex gap-2">
+                                                            <button onClick={()=>openEditModal(p)} className="text-blue-600 bg-blue-50 p-1.5 rounded hover:bg-blue-100"><Icon name="edit-2" size={14}/></button>
+                                                            <button onClick={()=>handleDeletePerson(p.id)} className="text-red-600 bg-red-50 p-1.5 rounded hover:bg-red-100"><Icon name="trash" size={14}/></button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

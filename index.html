@@ -72,7 +72,8 @@
             collection, getDocs, setDoc, doc, deleteDoc, query, orderBy
         };
         window._firebaseReady = true;
-        window.dispatchEvent(new Event('firebaseReady'));
+        // Dispatch after a microtask tick so listeners in Babel scripts can register first
+        setTimeout(() => window.dispatchEvent(new Event('firebaseReady')), 0);
     </script>
 
     <script>
@@ -296,7 +297,7 @@ self.addEventListener('fetch', e => {
         // AUTH SCREEN
         // ═══════════════════════════════════════════════════════
         const AuthScreen = ({ onAuthSuccess }) => {
-            const [tab, setTab] = useState('login'); // 'login' | 'register'
+            const [showRegister, setShowRegister] = useState(false);
             const [email, setEmail] = useState('');
             const [password, setPassword] = useState('');
             const [confirmPassword, setConfirmPassword] = useState('');
@@ -323,11 +324,13 @@ self.addEventListener('fetch', e => {
                 if (!email || !password) return setError('Vui lòng nhập đầy đủ thông tin!');
                 setLoading(true); setError(''); setSuccess('');
                 try {
+                    await waitForFirebase();
                     const { signInWithEmailAndPassword } = fns();
+                    if (!signInWithEmailAndPassword) throw new Error('Firebase chưa sẵn sàng, vui lòng thử lại.');
                     const cred = await signInWithEmailAndPassword(fbAuth(), email.trim(), password);
                     onAuthSuccess(cred.user);
                 } catch(e) {
-                    setError(mapError(e.code));
+                    setError(e.code ? mapError(e.code) : (e.message || 'Có lỗi xảy ra, vui lòng thử lại.'));
                 } finally { setLoading(false); }
             };
 
@@ -337,17 +340,25 @@ self.addEventListener('fetch', e => {
                 if (password.length < 6) return setError('Mật khẩu tối thiểu 6 ký tự!');
                 setLoading(true); setError(''); setSuccess('');
                 try {
+                    await waitForFirebase();
                     const { createUserWithEmailAndPassword } = fns();
+                    if (!createUserWithEmailAndPassword) throw new Error('Firebase chưa sẵn sàng, vui lòng thử lại.');
                     const cred = await createUserWithEmailAndPassword(fbAuth(), email.trim(), password);
                     setSuccess('Đăng ký thành công! Đang đăng nhập...');
                     setTimeout(() => onAuthSuccess(cred.user), 1000);
                 } catch(e) {
-                    setError(mapError(e.code));
+                    setError(e.code ? mapError(e.code) : (e.message || 'Có lỗi xảy ra, vui lòng thử lại.'));
                 } finally { setLoading(false); }
             };
 
             const handleKeyDown = (e) => {
-                if (e.key === 'Enter') tab === 'login' ? handleLogin() : handleRegister();
+                if (e.key === 'Enter') showRegister ? handleRegister() : handleLogin();
+            };
+
+            const switchMode = (toRegister) => {
+                setShowRegister(toRegister);
+                setError(''); setSuccess('');
+                setPassword(''); setConfirmPassword('');
             };
 
             return (
@@ -359,25 +370,9 @@ self.addEventListener('fetch', e => {
                                 <span style={{fontSize:'2.5rem'}}>🎁</span>
                             </div>
                             <h1 className="text-2xl font-extrabold text-slate-900">Quà An Sinh</h1>
-                            <p className="text-slate-400 text-sm mt-1">Hệ thống quản lý phát quà xã hội</p>
-                            <div className="flex items-center justify-center gap-1 mt-2">
-                                <span className="text-xs text-slate-400">Powered by</span>
-                                <span className="firebase-badge text-xs font-bold">Firebase</span>
-                            </div>
-                        </div>
-
-                        {/* Tab Switch */}
-                        <div className="flex border-b border-slate-200 mb-6">
-                            <button
-                                onClick={() => { setTab('login'); setError(''); setSuccess(''); }}
-                                className={`auth-tab flex-1 py-3 text-sm font-semibold ${tab==='login'?'active text-blue-600':'text-slate-400 hover:text-slate-600'}`}>
-                                🔐 Đăng nhập
-                            </button>
-                            <button
-                                onClick={() => { setTab('register'); setError(''); setSuccess(''); }}
-                                className={`auth-tab flex-1 py-3 text-sm font-semibold ${tab==='register'?'active text-blue-600':'text-slate-400 hover:text-slate-600'}`}>
-                                📝 Đăng ký
-                            </button>
+                            <p className="text-slate-400 text-sm mt-1">
+                                {showRegister ? 'Tạo tài khoản mới' : 'Đăng nhập để tiếp tục'}
+                            </p>
                         </div>
 
                         {/* Error / Success */}
@@ -435,7 +430,7 @@ self.addEventListener('fetch', e => {
                             </div>
 
                             {/* Confirm Password (register only) */}
-                            {tab === 'register' && (
+                            {showRegister && (
                                 <div className="animate-fade-in">
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Xác nhận mật khẩu</label>
                                     <div className="relative">
@@ -456,12 +451,12 @@ self.addEventListener('fetch', e => {
 
                             {/* Submit */}
                             <button
-                                onClick={tab==='login' ? handleLogin : handleRegister}
+                                onClick={showRegister ? handleRegister : handleLogin}
                                 disabled={loading}
                                 className="auth-btn-primary w-full text-white font-bold py-3.5 rounded-xl text-sm flex items-center justify-center gap-2 mt-2 disabled:opacity-60 disabled:cursor-not-allowed disabled:transform-none">
                                 {loading
                                     ? <><Icon name="loader-2" size={18} className="animate-spin"/> Đang xử lý...</>
-                                    : tab==='login'
+                                    : !showRegister
                                         ? <><Icon name="log-in" size={18}/> Đăng nhập</>
                                         : <><Icon name="user-plus" size={18}/> Tạo tài khoản</>
                                 }
@@ -469,16 +464,23 @@ self.addEventListener('fetch', e => {
                         </div>
 
                         {/* Switch hint */}
-                        <p className="text-center text-xs text-slate-400 mt-6">
-                            {tab==='login'
-                                ? <>Chưa có tài khoản? <button onClick={()=>{setTab('register');setError('');setSuccess('');}} className="text-blue-600 font-semibold hover:underline">Đăng ký ngay</button></>
-                                : <>Đã có tài khoản? <button onClick={()=>{setTab('login');setError('');setSuccess('');}} className="text-blue-600 font-semibold hover:underline">Đăng nhập</button></>
-                            }
-                        </p>
-
-                        {/* Footer */}
-                        <div className="mt-8 pt-5 border-t border-slate-100 text-center">
-                            <p className="text-[11px] text-slate-300">🔒 Bảo mật bởi Google Firebase Authentication</p>
+                        <div className="mt-6 pt-5 border-t border-slate-100 text-center">
+                            {!showRegister ? (
+                                <p className="text-xs text-slate-400">
+                                    Chưa có tài khoản?{' '}
+                                    <button onClick={()=>switchMode(true)} className="text-blue-600 font-semibold hover:underline">
+                                        Đăng ký tài khoản mới
+                                    </button>
+                                </p>
+                            ) : (
+                                <p className="text-xs text-slate-400">
+                                    Đã có tài khoản?{' '}
+                                    <button onClick={()=>switchMode(false)} className="text-blue-600 font-semibold hover:underline">
+                                        ← Quay lại đăng nhập
+                                    </button>
+                                </p>
+                            )}
+                            <p className="text-[11px] text-slate-300 mt-3">🔒 Bảo mật bởi Google Firebase Authentication</p>
                             <p className="text-[11px] text-slate-300 mt-1">Quà An Sinh v4.0 · Phần mềm nội bộ</p>
                         </div>
                     </div>
@@ -518,6 +520,18 @@ self.addEventListener('fetch', e => {
                 quantity: 10, filterAddress: 'all', filterCategory: 'all'
             });
 
+            // ── SEARCH & MANUAL SELECTION ──
+            const [importSearch, setImportSearch] = useState('');
+            const [importSearchName, setImportSearchName] = useState('');
+            const [importSearchCategory, setImportSearchCategory] = useState('');
+            const [importSearchAddress, setImportSearchAddress] = useState('');
+            const [waveMode, setWaveMode] = useState('auto'); // 'auto' | 'manual'
+            const [manualSearch, setManualSearch] = useState('');
+            const [manualSelected, setManualSelected] = useState(new Set());
+
+            const [showAuthModal, setShowAuthModal] = useState(false);
+            const [editingWave, setEditingWave] = useState(null);
+            const [editWaveForm, setEditWaveForm] = useState({});
             const fileInputRef = useRef(null);
 
             // ── TOAST HELPER ──
@@ -543,14 +557,19 @@ self.addEventListener('fetch', e => {
 
             // ── FIREBASE AUTH LISTENER ──
             useEffect(() => {
+                let unsub = null;
                 waitForFirebase().then(() => {
                     const { onAuthStateChanged } = fns();
-                    const unsub = onAuthStateChanged(fbAuth(), (user) => {
+                    unsub = onAuthStateChanged(fbAuth(), (user) => {
                         setCurrentUser(user);
                         setAuthLoading(false);
                     });
-                    return unsub;
+                }).catch(() => {
+                    setAuthLoading(false);
                 });
+                // Fallback: nếu firebase không load được sau 5 giây
+                const fallback = setTimeout(() => setAuthLoading(false), 5000);
+                return () => { if (unsub) unsub(); clearTimeout(fallback); };
             }, []);
 
             // ── FIREBASE SYNC FUNCTIONS ──
@@ -612,14 +631,15 @@ self.addEventListener('fetch', e => {
 
             // ── INIT DATA ──
             useEffect(() => {
-                if (!currentUser) return;
                 const init = async () => {
                     setLoading(true);
                     const savedPeople = localStorage.getItem('charity_people');
                     const savedWaves = localStorage.getItem('charity_waves');
                     if (savedPeople) setPeople(JSON.parse(savedPeople));
                     if (savedWaves) setWaves(JSON.parse(savedWaves));
-                    await syncFromFirebase();
+                    if (currentUser) {
+                        await syncFromFirebase();
+                    }
                     setLoading(false);
                 };
                 init();
@@ -628,11 +648,13 @@ self.addEventListener('fetch', e => {
             // ── AUTO SAVE ──
             const saveTimeout = useRef(null);
             useEffect(() => {
-                if (loading || !currentUser) return;
+                if (loading) return;
                 localStorage.setItem('charity_people', JSON.stringify(people));
                 localStorage.setItem('charity_waves', JSON.stringify(waves));
-                clearTimeout(saveTimeout.current);
-                saveTimeout.current = setTimeout(() => syncToFirebase(people, waves), 1500);
+                if (currentUser) {
+                    clearTimeout(saveTimeout.current);
+                    saveTimeout.current = setTimeout(() => syncToFirebase(people, waves), 1500);
+                }
             }, [people, waves, loading]);
 
             useEffect(() => { setIsSidebarOpen(false); }, [activeTab]);
@@ -646,6 +668,19 @@ self.addEventListener('fetch', e => {
             }), [people, waves]);
 
             const sortedPeople = useMemo(() => [...people].sort((a,b) => (b.createdAt||0)-(a.createdAt||0)), [people]);
+            const alphabeticalPeople = useMemo(() => [...people].sort((a,b) => (a.name||'').localeCompare((b.name||''), 'vi', {sensitivity:'base'})), [people]);
+            const manualFilteredPeople = useMemo(() => {
+                const q = manualSearch.toLowerCase();
+                return alphabeticalPeople.filter(p => !q || p.name.toLowerCase().includes(q) || p.address.toLowerCase().includes(q) || p.category.toLowerCase().includes(q));
+            }, [alphabeticalPeople, manualSearch]);
+            const filteredImportPeople = useMemo(() => {
+                return alphabeticalPeople.filter(p => {
+                    const nameOk = !importSearchName || p.name.toLowerCase().includes(importSearchName.toLowerCase());
+                    const catOk = !importSearchCategory || p.category.toLowerCase().includes(importSearchCategory.toLowerCase());
+                    const addrOk = !importSearchAddress || p.address.toLowerCase().includes(importSearchAddress.toLowerCase());
+                    return nameOk && catOk && addrOk;
+                });
+            }, [alphabeticalPeople, importSearchName, importSearchCategory, importSearchAddress]);
             const addressStats = useMemo(() => {
                 const c = {};
                 people.forEach(p => { c[p.address] = (c[p.address]||0)+1; });
@@ -783,20 +818,54 @@ self.addEventListener('fetch', e => {
 
             const handleCreateWave = () => {
                 if (!distForm.name) return showToast('Nhập tên đợt!', 'warning');
-                let candidates = people.filter(p => p.status === 'waiting');
-                if (distForm.filterAddress !== 'all') candidates = candidates.filter(p => p.address === distForm.filterAddress);
-                if (distForm.filterCategory !== 'all') candidates = candidates.filter(p => p.category === distForm.filterCategory);
-                if (candidates.length === 0) return showToast('Không còn ai thỏa điều kiện!', 'warning');
-                if (distForm.filterAddress === 'all' && distForm.filterCategory === 'all') candidates = shuffleArray([...candidates]);
-                const qty = Math.min(parseInt(distForm.quantity), candidates.length);
-                const selected = candidates.slice(0, qty);
+                let selected;
+                if (waveMode === 'manual') {
+                    if (manualSelected.size === 0) return showToast('Chưa chọn người nào!', 'warning');
+                    selected = people.filter(p => manualSelected.has(p.id));
+                } else {
+                    let candidates = people.filter(p => p.status === 'waiting');
+                    if (distForm.filterAddress !== 'all') candidates = candidates.filter(p => p.address === distForm.filterAddress);
+                    if (distForm.filterCategory !== 'all') candidates = candidates.filter(p => p.category === distForm.filterCategory);
+                    if (candidates.length === 0) return showToast('Không còn ai thỏa điều kiện!', 'warning');
+                    if (distForm.filterAddress === 'all' && distForm.filterCategory === 'all') candidates = shuffleArray([...candidates]);
+                    const qty = Math.min(parseInt(distForm.quantity), candidates.length);
+                    selected = candidates.slice(0, qty);
+                }
                 const selIds = new Set(selected.map(p => p.id));
-                const newWave = { id: `W${Date.now()}`, name: distForm.name, date: distForm.date, count: selected.length, criteria: `${distForm.filterAddress}/${distForm.filterCategory}`, recipients: selected, createdAt: Date.now() };
+                const newWave = { id: `W${Date.now()}`, name: distForm.name, date: distForm.date, count: selected.length, criteria: waveMode === 'manual' ? 'Chọn tay' : `${distForm.filterAddress}/${distForm.filterCategory}`, recipients: selected, createdAt: Date.now() };
                 setWaves(prev => [newWave, ...prev]);
                 setPeople(prev => prev.map(p => selIds.has(p.id) ? {...p, status:'received', waveId:newWave.id} : p));
-                showToast(`Đã tạo đợt ${qty} suất!`, 'success');
+                setManualSelected(new Set());
+                showToast(`Đã tạo đợt ${selected.length} suất!`, 'success');
                 setActiveTab('history');
                 setViewingWave(newWave);
+            };
+
+            const handleDeleteWave = (waveId) => {
+                if (!window.confirm('Xóa đợt phát này? Trạng thái của những người trong đợt sẽ được reset về "Chưa nhận".')) return;
+                const wave = waves.find(w => w.id === waveId);
+                if (wave) {
+                    const recipientIds = new Set((wave.recipients||[]).map(p => p.id));
+                    setPeople(prev => prev.map(p => recipientIds.has(p.id) ? {...p, status:'waiting', waveId:null} : p));
+                }
+                setWaves(prev => prev.filter(w => w.id !== waveId));
+                if (viewingWave && viewingWave.id === waveId) setViewingWave(null);
+                showToast('Đã xóa đợt phát!', 'warning');
+            };
+
+            const openEditWaveModal = (wave) => {
+                setEditingWave(wave);
+                setEditWaveForm({ name: wave.name, date: wave.date });
+            };
+
+            const handleSaveEditWave = () => {
+                if (!editWaveForm.name) return showToast('Vui lòng nhập tên đợt!', 'warning');
+                setWaves(prev => prev.map(w => w.id === editingWave.id ? {...w, name: editWaveForm.name, date: editWaveForm.date} : w));
+                if (viewingWave && viewingWave.id === editingWave.id) {
+                    setViewingWave(prev => ({...prev, name: editWaveForm.name, date: editWaveForm.date}));
+                }
+                setEditingWave(null);
+                showToast('Đã cập nhật đợt phát!', 'success');
             };
 
             const handleResetCampaign = () => {
@@ -859,8 +928,8 @@ self.addEventListener('fetch', e => {
                 </div>
             );
 
-            // ── NOT LOGGED IN ──
-            if (!currentUser) return <AuthScreen onAuthSuccess={setCurrentUser}/>;
+            // ── SHOW AUTH SCREEN IF NOT LOGGED IN ──
+            if (!currentUser) return <AuthScreen onAuthSuccess={(user) => setCurrentUser(user)} />;
 
             // ── APP LOADING ──
             if (loading) return (
@@ -901,15 +970,21 @@ self.addEventListener('fetch', e => {
                         </div>
 
                         {/* User info */}
-                        <div className="mb-4 px-2 py-2 bg-blue-50 rounded-xl flex items-center gap-2">
-                            <div className="bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-xs font-bold shrink-0">
-                                {currentUser.email?.[0]?.toUpperCase() || '?'}
+                        {currentUser ? (
+                            <div className="mb-4 px-2 py-2 bg-blue-50 rounded-xl flex items-center gap-2">
+                                <div className="bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-xs font-bold shrink-0">
+                                    {currentUser.email?.[0]?.toUpperCase() || '?'}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-bold text-slate-700 truncate">{currentUser.email}</p>
+                                    <p className="text-[10px] text-slate-400">Đã xác thực · Cloud sync bật</p>
+                                </div>
                             </div>
-                            <div className="flex-1 min-w-0">
-                                <p className="text-xs font-bold text-slate-700 truncate">{currentUser.email}</p>
-                                <p className="text-[10px] text-slate-400">Đã xác thực</p>
-                            </div>
-                        </div>
+                        ) : (
+                            <button onClick={() => setShowAuthModal(true)} className="mb-4 w-full px-3 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl flex items-center gap-2 text-sm font-bold transition-colors">
+                                <Icon name="log-in" size={16}/> Đăng nhập để đồng bộ
+                            </button>
+                        )}
 
                         {/* Sync Status */}
                         <div className="mb-4 px-2">
@@ -925,9 +1000,11 @@ self.addEventListener('fetch', e => {
                             <div className="my-4 border-t border-slate-100"></div>
 
                             <div className="space-y-1">
-                                <button onClick={() => syncFromFirebase()} className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors">
-                                    <Icon name="refresh-cw" size={18}/> Đồng bộ Firebase
-                                </button>
+                                    {currentUser && (
+                                        <button onClick={() => syncFromFirebase()} className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-colors">
+                                            <Icon name="refresh-cw" size={18}/> Đồng bộ Firebase
+                                        </button>
+                                    )}
                                 <button onClick={handleScanDuplicates} className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-600 hover:bg-orange-50 hover:text-orange-600 rounded-xl transition-colors">
                                     <Icon name="search" size={18}/> Kiểm tra trùng
                                 </button>
@@ -937,9 +1014,15 @@ self.addEventListener('fetch', e => {
                                 <button onClick={() => fileInputRef.current.click()} className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-600 hover:bg-green-50 hover:text-green-600 rounded-xl transition-colors">
                                     <Icon name="upload-cloud" size={18}/> Phục hồi JSON
                                 </button>
-                                <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 text-sm text-red-500 hover:bg-red-50 rounded-xl transition-colors">
-                                    <Icon name="log-out" size={18}/> Đăng xuất
-                                </button>
+                                {currentUser ? (
+                                    <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 text-sm text-red-500 hover:bg-red-50 rounded-xl transition-colors">
+                                        <Icon name="log-out" size={18}/> Đăng xuất
+                                    </button>
+                                ) : (
+                                    <button onClick={() => setShowAuthModal(true)} className="w-full flex items-center gap-3 px-4 py-3 text-sm text-blue-600 hover:bg-blue-50 rounded-xl transition-colors">
+                                        <Icon name="log-in" size={18}/> Đăng nhập / Đăng ký
+                                    </button>
+                                )}
                             </div>
                         </nav>
 
@@ -976,13 +1059,21 @@ self.addEventListener('fetch', e => {
                             </span>
                             <div className="flex items-center gap-3">
                                 <SyncBadge/>
-                                <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border rounded-lg text-sm text-slate-600">
-                                    <Icon name="user" size={14}/>
-                                    <span className="max-w-[150px] truncate">{currentUser.email}</span>
-                                </div>
-                                <button onClick={handleLogout} className="flex items-center gap-1 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg text-sm font-medium transition-colors">
-                                    <Icon name="log-out" size={14}/> Xuất
-                                </button>
+                                {currentUser ? (
+                                    <>
+                                        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border rounded-lg text-sm text-slate-600">
+                                            <Icon name="user" size={14}/>
+                                            <span className="max-w-[150px] truncate">{currentUser.email}</span>
+                                        </div>
+                                        <button onClick={handleLogout} className="flex items-center gap-1 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg text-sm font-medium transition-colors">
+                                            <Icon name="log-out" size={14}/> Xuất
+                                        </button>
+                                    </>
+                                ) : (
+                                    <button onClick={() => setShowAuthModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold transition-colors">
+                                        <Icon name="log-in" size={14}/> Đăng nhập
+                                    </button>
+                                )}
                                 <div className="bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg text-sm font-bold">{people.length} Dân</div>
                             </div>
                         </div>
@@ -1046,7 +1137,7 @@ self.addEventListener('fetch', e => {
 
                                     <div className="bg-white rounded-2xl shadow-sm border">
                                         <div className="p-5 border-b flex justify-between items-center">
-                                            <h3 className="font-bold text-slate-800 flex gap-2 items-center"><Icon name="list" size={18} className="text-blue-500"/>Danh sách ({sortedPeople.length})</h3>
+                                            <h3 className="font-bold text-slate-800 flex gap-2 items-center"><Icon name="list" size={18} className="text-blue-500"/>Danh sách ({filteredImportPeople.length}/{sortedPeople.length})</h3>
                                             <div className="flex gap-2">
                                                 <button onClick={() => setShowAddModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-lg text-xs font-bold hover:bg-purple-700">
                                                     <Icon name="user-plus" size={14}/> Thêm
@@ -1056,9 +1147,48 @@ self.addEventListener('fetch', e => {
                                                 </button>
                                             </div>
                                         </div>
+                                        {/* Search Filters */}
+                                        <div className="px-5 py-3 border-b bg-slate-50 space-y-2">
+                                            <div className="relative">
+                                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><Icon name="user" size={14}/></span>
+                                                <input
+                                                    className="w-full border pl-8 pr-3 py-2 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-400"
+                                                    placeholder="Tìm theo họ tên..."
+                                                    value={importSearchName}
+                                                    onChange={e => setImportSearchName(e.target.value)}
+                                                />
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <div className="relative flex-1">
+                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><Icon name="tag" size={14}/></span>
+                                                    <input
+                                                        className="w-full border pl-8 pr-3 py-2 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-400"
+                                                        placeholder="Đối tượng..."
+                                                        value={importSearchCategory}
+                                                        onChange={e => setImportSearchCategory(e.target.value)}
+                                                    />
+                                                </div>
+                                                <div className="relative flex-1">
+                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><Icon name="map-pin" size={14}/></span>
+                                                    <input
+                                                        className="w-full border pl-8 pr-3 py-2 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-400"
+                                                        placeholder="Địa chỉ..."
+                                                        value={importSearchAddress}
+                                                        onChange={e => setImportSearchAddress(e.target.value)}
+                                                    />
+                                                </div>
+                                                {(importSearchName || importSearchCategory || importSearchAddress) && (
+                                                    <button onClick={() => { setImportSearchName(''); setImportSearchCategory(''); setImportSearchAddress(''); }} className="px-2 py-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg border text-xs flex items-center gap-1">
+                                                        <Icon name="x" size={14}/>
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
                                         <div className="divide-y max-h-96 overflow-y-auto">
-                                            {sortedPeople.length === 0 && <div className="text-center py-12 text-slate-400"><Icon name="inbox" size={32} className="mx-auto mb-2"/>Chưa có dữ liệu</div>}
-                                            {sortedPeople.map(p => (
+                                            {filteredImportPeople.length === 0 && <div className="text-center py-12 text-slate-400"><Icon name="inbox" size={32} className="mx-auto mb-2"/>
+                                                {sortedPeople.length === 0 ? 'Chưa có dữ liệu' : 'Không tìm thấy kết quả phù hợp'}
+                                            </div>}
+                                            {filteredImportPeople.map(p => (
                                                 <div key={p.id} className="flex items-center px-5 py-3 hover:bg-slate-50 gap-3">
                                                     <div className={`w-2 h-2 rounded-full shrink-0 ${p.status==='received'?'bg-green-400':'bg-amber-400'}`}></div>
                                                     <div className="flex-1 min-w-0">
@@ -1079,9 +1209,26 @@ self.addEventListener('fetch', e => {
                             {/* CREATE WAVE TAB */}
                             {activeTab === 'create-wave' && (
                                 <div className="max-w-lg mx-auto animate-fade-in">
-                                    <div className="bg-white rounded-2xl shadow-sm border p-6">
-                                        <h3 className="font-bold text-lg mb-6 flex gap-2 items-center text-slate-800"><Icon name="wand-2" size={22} className="text-purple-600"/>Tạo Đợt Phát Mới</h3>
-                                        <div className="space-y-4">
+                                    {/* Tab switcher */}
+                                    <div className="flex bg-white rounded-2xl shadow-sm border mb-5 p-1 gap-1">
+                                        <button
+                                            onClick={() => setWaveMode('auto')}
+                                            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold transition-all ${waveMode === 'auto' ? 'bg-purple-600 text-white shadow-lg shadow-purple-200' : 'text-slate-500 hover:bg-slate-50'}`}>
+                                            <Icon name="wand-2" size={16}/> Tự Động
+                                        </button>
+                                        <button
+                                            onClick={() => setWaveMode('manual')}
+                                            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold transition-all ${waveMode === 'manual' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-500 hover:bg-slate-50'}`}>
+                                            <Icon name="hand" size={16}/> Chọn Tay
+                                        </button>
+                                    </div>
+
+                                    {/* Shared: wave name and date */}
+                                    <div className="bg-white rounded-2xl shadow-sm border p-5 mb-4">
+                                        <h3 className="font-bold text-slate-700 mb-4 text-sm uppercase tracking-wide flex items-center gap-2">
+                                            <Icon name="info" size={15} className="text-slate-400"/> Thông tin đợt phát
+                                        </h3>
+                                        <div className="space-y-3">
                                             <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Tên đợt phát <span className="text-red-500">*</span></label>
                                                 <input className="w-full border p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-purple-500"
                                                     value={distForm.name} onChange={e=>setDistForm({...distForm,name:e.target.value})} placeholder="VD: Đợt 1 - Tết Nguyên Đán 2025"/>
@@ -1090,30 +1237,95 @@ self.addEventListener('fetch', e => {
                                                 <input type="date" className="w-full border p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-purple-500"
                                                     value={distForm.date} onChange={e=>setDistForm({...distForm,date:e.target.value})}/>
                                             </div>
-                                            <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Số suất cần phát</label>
-                                                <input type="number" min="1" className="w-full border p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-purple-500"
-                                                    value={distForm.quantity} onChange={e=>setDistForm({...distForm,quantity:e.target.value})}/>
-                                                <p className="text-xs text-slate-400 mt-1">Hiện còn {stats.waiting} người chưa nhận</p>
-                                            </div>
-                                            <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Lọc theo địa bàn</label>
-                                                <select className="w-full border p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-purple-500"
-                                                    value={distForm.filterAddress} onChange={e=>setDistForm({...distForm,filterAddress:e.target.value})}>
-                                                    <option value="all">Tất cả địa bàn</option>
-                                                    {uniqueAddresses.map(a=><option key={a} value={a}>{a}</option>)}
-                                                </select>
-                                            </div>
-                                            <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Lọc theo đối tượng</label>
-                                                <select className="w-full border p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-purple-500"
-                                                    value={distForm.filterCategory} onChange={e=>setDistForm({...distForm,filterCategory:e.target.value})}>
-                                                    <option value="all">Tất cả đối tượng</option>
-                                                    {uniqueCategories.map(c=><option key={c} value={c}>{c}</option>)}
-                                                </select>
-                                            </div>
-                                            <button onClick={handleCreateWave} className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-purple-200 flex justify-center items-center gap-2 mt-2">
-                                                <Icon name="wand-2" size={20}/> Tạo Đợt Phát Ngay
-                                            </button>
                                         </div>
                                     </div>
+
+                                    {/* AUTO MODE */}
+                                    {waveMode === 'auto' && (
+                                        <div className="bg-white rounded-2xl shadow-sm border p-5 mb-4 animate-fade-in">
+                                            <h3 className="font-bold text-slate-700 mb-4 text-sm uppercase tracking-wide flex items-center gap-2">
+                                                <Icon name="wand-2" size={15} className="text-purple-500"/> Phát tự động
+                                            </h3>
+                                            <div className="space-y-4">
+                                                <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Số suất cần phát</label>
+                                                    <input type="number" min="1" className="w-full border p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-purple-500"
+                                                        value={distForm.quantity} onChange={e=>setDistForm({...distForm,quantity:e.target.value})}/>
+                                                    <p className="text-xs text-slate-400 mt-1">Hiện còn {stats.waiting} người chưa nhận</p>
+                                                </div>
+                                                <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Lọc theo địa bàn</label>
+                                                    <select className="w-full border p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-purple-500"
+                                                        value={distForm.filterAddress} onChange={e=>setDistForm({...distForm,filterAddress:e.target.value})}>
+                                                        <option value="all">Tất cả địa bàn</option>
+                                                        {uniqueAddresses.map(a=><option key={a} value={a}>{a}</option>)}
+                                                    </select>
+                                                </div>
+                                                <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Lọc theo đối tượng</label>
+                                                    <select className="w-full border p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-purple-500"
+                                                        value={distForm.filterCategory} onChange={e=>setDistForm({...distForm,filterCategory:e.target.value})}>
+                                                        <option value="all">Tất cả đối tượng</option>
+                                                        {uniqueCategories.map(c=><option key={c} value={c}>{c}</option>)}
+                                                    </select>
+                                                </div>
+                                                <button onClick={handleCreateWave} className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-purple-200 flex justify-center items-center gap-2">
+                                                    <Icon name="wand-2" size={20}/> Tạo Đợt Phát Tự Động
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* MANUAL MODE */}
+                                    {waveMode === 'manual' && (
+                                        <div className="bg-white rounded-2xl shadow-sm border animate-fade-in">
+                                            <div className="p-5 border-b">
+                                                <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wide flex items-center gap-2 mb-3">
+                                                    <Icon name="hand" size={15} className="text-blue-500"/> Chọn người thủ công
+                                                </h3>
+                                                <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 text-sm text-blue-700 font-medium mb-3">
+                                                    Đã chọn: <span className="font-extrabold">{manualSelected.size}</span> người
+                                                    {manualSelected.size > 0 && (
+                                                        <button onClick={() => setManualSelected(new Set())} className="ml-2 text-red-500 text-xs hover:underline">(Bỏ chọn tất cả)</button>
+                                                    )}
+                                                </div>
+                                                <div className="relative">
+                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><Icon name="search" size={15}/></span>
+                                                    <input
+                                                        className="w-full border pl-9 pr-3 py-2.5 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-400 text-sm"
+                                                        placeholder="Tìm theo tên, địa chỉ, đối tượng..."
+                                                        value={manualSearch}
+                                                        onChange={e => setManualSearch(e.target.value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="max-h-72 overflow-y-auto divide-y">
+                                                {manualFilteredPeople
+                                                    .map(p => (
+                                                    <div key={p.id}
+                                                        onClick={() => {
+                                                            const s = new Set(manualSelected);
+                                                            s.has(p.id) ? s.delete(p.id) : s.add(p.id);
+                                                            setManualSelected(s);
+                                                        }}
+                                                        className={`flex items-center gap-3 px-5 py-3 cursor-pointer transition-colors ${manualSelected.has(p.id) ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
+                                                        <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${manualSelected.has(p.id) ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>
+                                                            {manualSelected.has(p.id) && <Icon name="check" size={12} className="text-white"/>}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className="font-semibold text-sm text-slate-800 truncate">{p.name}</p>
+                                                            <p className="text-xs text-slate-400 truncate">{p.address} · {p.category} · <span className={p.status==='received'?'text-green-600':'text-amber-600'}>{p.status==='received'?'Đã nhận':'Chưa nhận'}</span></p>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                                {manualFilteredPeople.length === 0 && (
+                                                    <div className="text-center py-8 text-slate-400 text-sm"><Icon name="search" size={24} className="mx-auto mb-2 opacity-30"/>Không tìm thấy</div>
+                                                )}
+                                            </div>
+                                            <div className="p-4 border-t">
+                                                <button onClick={handleCreateWave} disabled={manualSelected.size === 0} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-200 flex justify-center items-center gap-2">
+                                                    <Icon name="hand" size={20}/> Tạo Đợt ({manualSelected.size} người)
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -1137,9 +1349,17 @@ self.addEventListener('fetch', e => {
                                                     <span className="flex items-center gap-1"><Icon name="filter" size={12}/>{w.criteria}</span>
                                                 </div>
                                             </div>
-                                            <button onClick={()=>setViewingWave(w)} className="bg-blue-50 text-blue-600 hover:bg-blue-100 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 self-start md:self-center">
-                                                <Icon name="eye" size={16}/> Xem
-                                            </button>
+                                            <div className="flex gap-2 self-start md:self-center flex-wrap">
+                                                <button onClick={()=>setViewingWave(w)} className="bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5">
+                                                    <Icon name="eye" size={15}/> Xem
+                                                </button>
+                                                <button onClick={()=>openEditWaveModal(w)} className="bg-amber-50 text-amber-600 hover:bg-amber-100 px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5">
+                                                    <Icon name="edit-2" size={15}/> Sửa
+                                                </button>
+                                                <button onClick={()=>handleDeleteWave(w.id)} className="bg-red-50 text-red-600 hover:bg-red-100 px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5">
+                                                    <Icon name="trash-2" size={15}/> Xóa
+                                                </button>
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
@@ -1178,6 +1398,32 @@ self.addEventListener('fetch', e => {
                                     <button onClick={()=>handleExportWaveExcel(viewingWave)} className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-green-200 flex justify-center items-center gap-2">
                                         <Icon name="file-down" size={20}/> Xuất Excel Đợt Này
                                     </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* EDIT WAVE MODAL */}
+                    {editingWave && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay p-4 animate-fade-in">
+                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+                                <h3 className="font-bold text-lg mb-6 flex gap-2 items-center text-slate-800 border-b pb-2"><Icon name="edit-2" size={24} className="text-amber-500"/> Sửa đợt phát</h3>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Tên đợt phát <span className="text-red-500">*</span></label>
+                                        <input className="w-full border p-3 rounded-xl bg-slate-50 focus:bg-white outline-none focus:ring-2 focus:ring-amber-500" value={editWaveForm.name} onChange={e=>setEditWaveForm({...editWaveForm,name:e.target.value})} placeholder="Tên đợt phát"/>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Ngày phát</label>
+                                        <input type="date" className="w-full border p-3 rounded-xl bg-slate-50 focus:bg-white outline-none focus:ring-2 focus:ring-amber-500" value={editWaveForm.date} onChange={e=>setEditWaveForm({...editWaveForm,date:e.target.value})}/>
+                                    </div>
+                                    <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-500">
+                                        <Icon name="info" size={13} className="inline mr-1"/>Danh sách người nhận và số suất không thay đổi khi sửa.
+                                    </div>
+                                    <div className="flex gap-2 justify-end pt-2">
+                                        <button onClick={()=>setEditingWave(null)} className="px-5 py-2 text-slate-500 hover:bg-slate-100 rounded-lg font-medium">Hủy</button>
+                                        <button onClick={handleSaveEditWave} className="bg-amber-500 text-white px-6 py-2 rounded-lg font-bold shadow-md hover:bg-amber-600">Lưu</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>

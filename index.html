@@ -220,6 +220,22 @@
         // ═══════════════════════════════════════════════════════
         const generateID = () => `083${Math.floor(Math.random() * 1000000000).toString().padStart(9, '0')}`;
         const shuffleArray = (arr) => { for (let i = arr.length-1; i>0; i--) { const j = Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; } return arr; };
+        const readJson = (key, fallback) => {
+            try {
+                const raw = localStorage.getItem(key);
+                return raw ? JSON.parse(raw) : fallback;
+            } catch {
+                return fallback;
+            }
+        };
+        const DELETED_WAVES_KEY = 'charity_deleted_waves';
+        const getDeletedWaveIds = () => new Set(readJson(DELETED_WAVES_KEY, []));
+        const saveDeletedWaveIds = (ids) => localStorage.setItem(DELETED_WAVES_KEY, JSON.stringify([...ids]));
+        const markDeletedWaves = (ids) => {
+            const deleted = getDeletedWaveIds();
+            ids.filter(Boolean).forEach(id => deleted.add(id));
+            saveDeletedWaveIds(deleted);
+        };
         const getDuplicateGroups = (list) => {
             const groups = {};
             list.forEach(p => { const k = (p.name||'').trim().toLowerCase(); if(!groups[k]) groups[k]=[]; groups[k].push(p); });
@@ -709,20 +725,24 @@
                         address: p.address, category: p.category,
                         status: p.status, waveId: p.waveId, createdAt: p.createdAt
                     }));
+                    const deletedWaveIds = getDeletedWaveIds();
+                    if (deletedWaveIds.size) {
+                        Promise.all([...deletedWaveIds].map(id => fsDelete(`users/${currentUser.uid}/waves`, id))).catch(() => {});
+                    }
                     const mappedWaves = wData.map(w => ({
                         id: w.id, name: w.name, date: w.date,
                         count: w.count, criteria: w.criteria,
                         recipients: typeof w.recipients === 'string' ? JSON.parse(w.recipients) : (w.recipients || []),
                         createdAt: w.createdAt
-                    }));
+                    })).filter(w => !deletedWaveIds.has(w.id));
                     // Gộp dữ liệu offline (nhập khi chưa đăng nhập) với dữ liệu đám mây.
                     // Giữ lại các mục cục bộ chưa có trên cloud; auto-save sẽ tự đẩy lên.
-                    const localPeople = JSON.parse(localStorage.getItem('charity_people') || '[]');
-                    const localWaves = JSON.parse(localStorage.getItem('charity_waves') || '[]');
+                    const localPeople = readJson('charity_people', []);
+                    const localWaves = readJson('charity_waves', []);
                     const cloudPIds = new Set(mappedPeople.map(p => p.id));
                     const cloudWIds = new Set(mappedWaves.map(w => w.id));
                     const extraPeople = (Array.isArray(localPeople) ? localPeople : []).filter(p => p && p.id && !cloudPIds.has(p.id));
-                    const extraWaves = (Array.isArray(localWaves) ? localWaves : []).filter(w => w && w.id && !cloudWIds.has(w.id));
+                    const extraWaves = (Array.isArray(localWaves) ? localWaves : []).filter(w => w && w.id && !cloudWIds.has(w.id) && !deletedWaveIds.has(w.id));
                     const finalPeople = [...mappedPeople, ...extraPeople];
                     const finalWaves = [...mappedWaves, ...extraWaves];
                     setPeople(finalPeople);
@@ -767,10 +787,11 @@
             useEffect(() => {
                 const init = async () => {
                     setLoading(true);
-                    const savedPeople = localStorage.getItem('charity_people');
-                    const savedWaves = localStorage.getItem('charity_waves');
-                    if (savedPeople) setPeople(JSON.parse(savedPeople));
-                    if (savedWaves) setWaves(JSON.parse(savedWaves));
+                    const savedPeople = readJson('charity_people', null);
+                    const savedWaves = readJson('charity_waves', null);
+                    const deletedWaveIds = getDeletedWaveIds();
+                    if (savedPeople) setPeople(savedPeople);
+                    if (savedWaves) setWaves(savedWaves.filter(w => w && !deletedWaveIds.has(w.id)));
                     if (currentUser) {
                         await syncFromFirebase();
                     }
@@ -858,6 +879,7 @@
                         const data = JSON.parse(evt.target.result);
                         if(data.people && Array.isArray(data.people)) {
                             if(confirm(`Phục hồi ${data.people.length} người? Dữ liệu cũ sẽ mất.`)) {
+                                localStorage.removeItem(DELETED_WAVES_KEY);
                                 setPeople(data.people); setWaves(data.waves||[]);
                                 showToast('Phục hồi thành công!', 'success');
                                 setActiveTab('dashboard');
@@ -1004,6 +1026,7 @@
                     setPeople(prev => prev.map(p => recipientIds.has(p.id) ? {...p, status:'waiting', waveId:null} : p));
                 }
                 setWaves(prev => prev.filter(w => w.id !== waveId));
+                markDeletedWaves([waveId]);
                 if (viewingWave && viewingWave.id === waveId) setViewingWave(null);
                 if (currentUser) {
                     fsDelete(`users/${currentUser.uid}/waves`, waveId)
@@ -1028,8 +1051,10 @@
             };
 
             const handleResetCampaign = () => {
+                const waveIdsToDelete = waves.map(w => w.id);
                 if (confirm("Reset trạng thái 'Chưa nhận' cho tất cả?")) {
                     setPeople(prev => prev.map(p => ({...p, status:'waiting', waveId:null})));
+                    markDeletedWaves(waveIdsToDelete);
                     setWaves([]);
                     if (currentUser) {
                         fsClearCollection(`users/${currentUser.uid}/waves`)
@@ -1040,9 +1065,12 @@
             };
 
             const handleHardReset = () => {
+                const waveIdsToDelete = waves.map(w => w.id);
                 if (confirm("XÓA SẠCH DỮ LIỆU?")) {
+                    markDeletedWaves(waveIdsToDelete);
                     setPeople([]); setWaves([]);
-                    localStorage.clear();
+                    localStorage.removeItem('charity_people');
+                    localStorage.removeItem('charity_waves');
                     if (currentUser) {
                         Promise.all([
                             fsClearCollection(`users/${currentUser.uid}/people`),

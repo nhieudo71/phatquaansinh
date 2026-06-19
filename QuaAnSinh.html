@@ -690,6 +690,7 @@
             const [showQrModal, setShowQrModal] = useState(null);
             const [editingWave, setEditingWave] = useState(null);
             const [editWaveForm, setEditWaveForm] = useState({});
+            const [editWaveSearch, setEditWaveSearch] = useState('');
             const fileInputRef = useRef(null);
 
             // ── TOAST HELPER ──
@@ -899,6 +900,18 @@
                     return !q || haystack.includes(q);
                 });
             }, [alphabeticalPeople, reportFilters]);
+            const editWaveSelectedIds = useMemo(() => new Set(editWaveForm.recipientIds || []), [editWaveForm.recipientIds]);
+            const editWaveCandidates = useMemo(() => {
+                if (!editingWave) return [];
+                const q = normalizeText(editWaveSearch).trim();
+                return alphabeticalPeople.filter(p => {
+                    const isInWave = editWaveSelectedIds.has(p.id);
+                    const isAvailable = p.status !== 'received' || p.waveId === editingWave.id || isInWave;
+                    if (!isAvailable) return false;
+                    const haystack = normalizeText(`${p.name} ${p.personalId} ${p.address} ${p.category}`);
+                    return !q || haystack.includes(q);
+                });
+            }, [alphabeticalPeople, editWaveSearch, editWaveSelectedIds, editingWave]);
             const addressStats = useMemo(() => {
                 const c = {};
                 people.forEach(p => {
@@ -1130,18 +1143,42 @@
 
             const openEditWaveModal = (wave) => {
                 setEditingWave(wave);
-                setEditWaveForm({ name: wave.name, date: wave.date });
+                setEditWaveSearch('');
+                setEditWaveForm({ name: wave.name, date: wave.date, recipientIds: (wave.recipients || []).map(p => p.id) });
+            };
+            const toggleEditWaveRecipient = (id) => {
+                setEditWaveForm(prev => {
+                    const ids = new Set(prev.recipientIds || []);
+                    ids.has(id) ? ids.delete(id) : ids.add(id);
+                    return {...prev, recipientIds: [...ids]};
+                });
             };
 
             const handleSaveEditWave = () => {
                 if (!requireAdmin()) return;
                 if (!editWaveForm.name) return showToast('Vui lòng nhập tên đợt!', 'warning');
-                setWaves(prev => prev.map(w => w.id === editingWave.id ? {...w, name: editWaveForm.name, date: editWaveForm.date} : w));
+                const selectedIds = new Set(editWaveForm.recipientIds || []);
+                const oldIds = new Set((editingWave.recipients || []).map(p => p.id));
+                const updatedRecipients = people
+                    .filter(p => selectedIds.has(p.id))
+                    .map(p => ({...p, status: 'received', waveId: editingWave.id}));
+                setWaves(prev => prev.map(w => w.id === editingWave.id ? {
+                    ...w,
+                    name: editWaveForm.name,
+                    date: editWaveForm.date,
+                    count: updatedRecipients.length,
+                    recipients: updatedRecipients
+                } : w));
+                setPeople(prev => prev.map(p => {
+                    if (selectedIds.has(p.id)) return {...p, status: 'received', waveId: editingWave.id};
+                    if (oldIds.has(p.id) && p.waveId === editingWave.id) return {...p, status: 'waiting', waveId: null};
+                    return p;
+                }));
                 if (viewingWave && viewingWave.id === editingWave.id) {
-                    setViewingWave(prev => ({...prev, name: editWaveForm.name, date: editWaveForm.date}));
+                    setViewingWave(prev => ({...prev, name: editWaveForm.name, date: editWaveForm.date, count: updatedRecipients.length, recipients: updatedRecipients}));
                 }
                 setEditingWave(null);
-                addAudit('wave_edit', `Sửa ${editWaveForm.name}`);
+                addAudit('wave_edit', `Sửa ${editWaveForm.name}: ${oldIds.size} -> ${updatedRecipients.length} người`);
                 showToast('Đã cập nhật đợt phát!', 'success');
             };
 
@@ -1858,7 +1895,7 @@
                     {/* EDIT WAVE MODAL */}
                     {editingWave && (
                         <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay p-4 animate-fade-in">
-                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl p-6 max-h-[88vh] flex flex-col">
                                 <h3 className="font-bold text-lg mb-6 flex gap-2 items-center text-slate-800 border-b pb-2"><Icon name="edit-2" size={24} className="text-amber-500"/> Sửa đợt phát</h3>
                                 <div className="space-y-4">
                                     <div>
@@ -1869,8 +1906,34 @@
                                         <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Ngày phát</label>
                                         <input type="date" className="w-full border p-3 rounded-xl bg-slate-50 focus:bg-white outline-none focus:ring-2 focus:ring-amber-500" value={editWaveForm.date} onChange={e=>setEditWaveForm({...editWaveForm,date:e.target.value})}/>
                                     </div>
-                                    <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-500">
-                                        <Icon name="info" size={13} className="inline mr-1"/>Danh sách người nhận và số suất không thay đổi khi sửa.
+                                    <div className="bg-blue-50 rounded-xl p-3 text-sm text-blue-700 flex items-center justify-between gap-3">
+                                        <span><Icon name="users" size={15} className="inline mr-1"/>Đang chọn <b>{(editWaveForm.recipientIds || []).length}</b> người</span>
+                                        <button onClick={()=>setEditWaveForm(prev => ({...prev, recipientIds: []}))} className="text-xs font-bold text-red-600 hover:underline">Bỏ chọn hết</button>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Tìm và thêm/bớt người nhận</label>
+                                        <input className="w-full border p-3 rounded-xl bg-slate-50 focus:bg-white outline-none focus:ring-2 focus:ring-amber-500" value={editWaveSearch} onChange={e=>setEditWaveSearch(e.target.value)} placeholder="Tìm tên, CCCD, địa chỉ, đối tượng"/>
+                                    </div>
+                                    <div className="border rounded-xl divide-y max-h-72 overflow-y-auto">
+                                        {editWaveCandidates.length === 0 && <div className="p-6 text-center text-slate-400 text-sm">Không có người phù hợp</div>}
+                                        {editWaveCandidates.map(p => {
+                                            const selected = editWaveSelectedIds.has(p.id);
+                                            return (
+                                                <button key={p.id} type="button" onClick={()=>toggleEditWaveRecipient(p.id)}
+                                                    className={`w-full flex items-center gap-3 px-4 py-3 text-left ${selected ? 'bg-amber-50' : 'hover:bg-slate-50'}`}>
+                                                    <span className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 ${selected ? 'bg-amber-500 border-amber-500 text-white' : 'border-slate-300'}`}>
+                                                        {selected && <Icon name="check" size={13}/>}
+                                                    </span>
+                                                    <span className="flex-1 min-w-0">
+                                                        <span className="block font-semibold text-sm text-slate-800 truncate">{p.name}</span>
+                                                        <span className="block text-xs text-slate-400 truncate">{p.personalId} · {p.address} · {p.category}</span>
+                                                    </span>
+                                                    <span className={`text-[10px] px-2 py-1 rounded-full ${p.status === 'received' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+                                                        {p.status === 'received' ? 'Đang trong đợt' : 'Chưa nhận'}
+                                                    </span>
+                                                </button>
+                                            );
+                                        })}
                                     </div>
                                     <div className="flex gap-2 justify-end pt-2">
                                         <button onClick={()=>setEditingWave(null)} className="px-5 py-2 text-slate-500 hover:bg-slate-100 rounded-lg font-medium">Hủy</button>

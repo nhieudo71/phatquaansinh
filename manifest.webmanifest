@@ -3,7 +3,7 @@
   "name": "Quản Lý Quà An Sinh",
   "short_name": "Quà An Sinh",
   "description": "Ứng dụng quản lý phát quà an sinh xã hội",
-  "start_url": "QuaAnSinh.html",
+  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",

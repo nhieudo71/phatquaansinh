@@ -1,0 +1,63 @@
+╔══════════════════════════════════════════════════════════╗
+║        QUẢN LÝ QUÀ AN SINH – HƯỚNG DẪN CÀI ĐẶT (PWA)        ║
+╚══════════════════════════════════════════════════════════╝
+
+Bộ file gồm có:
+  • QuaAnSinh.html ........ ứng dụng chính
+  • manifest.webmanifest .. khai báo PWA
+  • sw.js ................. service worker (chạy offline)
+  • icon-*.png ............ biểu tượng ứng dụng
+  • server.js ............. máy chủ localhost (chạy bằng Node.js)
+  • start.bat ............. NHẤP ĐÚP để chạy localhost
+  • deploy.bat ........... đưa app lên mạng (để cài lên điện thoại)
+
+────────────────────────────────────────────────────────────
+A) CHẠY TRÊN MÁY TÍNH (LOCALHOST) – nhanh nhất
+────────────────────────────────────────────────────────────
+1. Cài Node.js (chỉ làm 1 lần): vào https://nodejs.org tải bản
+   "LTS" rồi cài như phần mềm bình thường.
+2. NHẤP ĐÚP vào file  start.bat
+   → Trình duyệt tự mở địa chỉ  http://localhost:8080/
+3. Để tắt: đóng cửa sổ đen (hoặc nhấn Ctrl + C trong đó).
+
+────────────────────────────────────────────────────────────
+B) CÀI THÀNH ỨNG DỤNG TRÊN MÁY TÍNH (Chrome / Edge / Cốc Cốc)
+────────────────────────────────────────────────────────────
+• Sau khi mở http://localhost:8080/ , nhìn góc phải thanh địa
+  chỉ sẽ có biểu tượng "Cài đặt" (hình màn hình có mũi tên ⬇).
+• Bấm vào đó → "Cài đặt" → app xuất hiện như phần mềm riêng,
+  có icon hộp quà ngoài Desktop / Menu Start.
+
+(Nếu chưa thấy nút Cài đặt: bấm dấu ⋮ ở góc phải trình duyệt →
+ tìm mục "Cài đặt Quà An Sinh..." / "Install app".)
+
+────────────────────────────────────────────────────────────
+C) CÀI LÊN ĐIỆN THOẠI (Android / iPhone)
+────────────────────────────────────────────────────────────
+Điện thoại cần địa chỉ HTTPS công khai (localhost không cài
+được trên điện thoại). Cách dễ nhất – dùng Firebase Hosting
+miễn phí (bạn đã có sẵn dự án "qua-an-sinh"):
+
+1. Trên máy tính, NHẤP ĐÚP file  deploy.bat
+2. Lần đầu nó mở trình duyệt cho bạn ĐĂNG NHẬP GOOGLE (chọn
+   đúng tài khoản tạo Firebase) và hỏi cho phép – bấm Allow.
+3. Chờ chạy xong, dòng "Hosting URL" sẽ hiện link, ví dụ:
+        https://qua-an-sinh.web.app
+4. Mở link đó TRÊN ĐIỆN THOẠI:
+   • Android (Chrome): bấm ⋮ → "Thêm vào màn hình chính" /
+     "Cài đặt ứng dụng".
+   • iPhone (Safari): bấm nút Chia sẻ ⬆ → "Thêm vào MH chính".
+5. Xong! App có icon hộp quà ngoài màn hình điện thoại, mở lên
+   chạy toàn màn hình như app thật, dữ liệu đồng bộ qua Firebase.
+
+Mỗi khi sửa/đổi app, chạy lại deploy.bat để cập nhật bản online.
+
+────────────────────────────────────────────────────────────
+GHI CHÚ
+────────────────────────────────────────────────────────────
+• Dữ liệu vẫn lưu trên Firebase như cũ – không thay đổi gì.
+• Mở thẳng QuaAnSinh.html bằng cách nhấp đúp vẫn dùng được,
+  nhưng sẽ KHÔNG cài được PWA và không chạy offline. Muốn cài
+  app thì phải mở qua start.bat (localhost) hoặc link online.
+• Cổng mặc định là 8080. Nếu bị trùng, mở server.js sửa số
+  PORT = 8080 thành số khác (vd 8090).
